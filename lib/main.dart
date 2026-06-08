@@ -6,8 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:genui/genui.dart' as genui;
 import 'package:genui/genui.dart' hide TextPart;
 
-import 'catalog/reps_card.dart';
 import 'firebase_options.dart';
+import 'log_bubble.dart';
 import 'message_bubble.dart';
 import 'three_pane_layout.dart';
 
@@ -60,11 +60,12 @@ class _MyHomePageState extends State<MyHomePage> {
   final _scrollController = ScrollController();
   late final ChatSession _chatSession;
 
+  final _logScrollController = ScrollController();
   late final SurfaceController _controller;
   late final A2uiTransportAdapter _transport;
   late final Conversation _conversation;
   late final Catalog catalog;
-  String _chronologicalLog = '';
+  final List<TextItem> _chronologicalLog = [];
 
   @override
   void initState() {
@@ -135,36 +136,62 @@ class _MyHomePageState extends State<MyHomePage> {
   void dispose() {
     _textController.dispose();
     _scrollController.dispose();
+    _logScrollController.dispose();
     super.dispose();
   }
 
+  void _scrollLogToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_logScrollController.hasClients) {
+        _logScrollController.animateTo(
+          _logScrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
   Future<void> _sendAndReceive(ChatMessage msg) async {
-    final buffer = StringBuffer();
+    final rawBuffer = StringBuffer();
+    final logBuffer = StringBuffer();
 
     for (final part in msg.parts) {
       if (part.isUiInteractionPart) {
-        buffer.write(part.asUiInteractionPart!.interaction);
+        final interaction = part.asUiInteractionPart!.interaction;
+        rawBuffer.write(interaction);
+        try {
+          final decoded = json.decode(interaction);
+          final pretty = const JsonEncoder.withIndent('  ').convert(decoded);
+          logBuffer.write(pretty);
+        } catch (_) {
+          logBuffer.write(interaction);
+        }
       } else if (part is genui.TextPart) {
-        buffer.write(part.text);
+        rawBuffer.write(part.text);
+        logBuffer.write(part.text);
       }
     }
 
-    if (buffer.isEmpty) {
+    if (rawBuffer.isEmpty) {
       return;
     }
 
-    final text = buffer.toString();
+    final text = rawBuffer.toString();
+    final logText = logBuffer.toString();
     setState(() {
-      _chronologicalLog += text;
+      _chronologicalLog.add(TextItem(text: logText, isUser: true));
     });
+    _scrollLogToBottom();
 
     final response = await _chatSession.sendMessage(Content.text(text));
 
     if (response.text?.isNotEmpty ?? false) {
       final responseText = response.text!;
       setState(() {
-        _chronologicalLog += responseText;
+        _chronologicalLog.add(TextItem(text: responseText, isUser: false));
       });
+      _scrollLogToBottom();
       _transport.addChunk(responseText);
     }
   }
@@ -187,18 +214,40 @@ class _MyHomePageState extends State<MyHomePage> {
     await _conversation.sendRequest(ChatMessage.user(text));
   }
 
-  // Widget _buildDataModelWidgets() {
-  //   final widgets = <Widget>[];
+  Widget _buildDataModelWidgets() {
+    final widgets = <Widget>[];
 
-  //   for (final item in _items.whereType<SurfaceItem>()) {
-  //     final model = _controller.store.getDataModel(item.surfaceId);
-  //     final data = model.getValue<Object?>(DataPath.root);
-  //     final prettyJson = const JsonEncoder.withIndent('  ').convert(data);
-  //     widgets.add(Text(prettyJson));
-  //   }
+    for (final item in _items.whereType<SurfaceItem>()) {
+      final model = _controller.store.getDataModel(item.surfaceId);
+      final data = model.getValue<Object?>(DataPath.root);
+      final prettyJson = const JsonEncoder.withIndent('  ').convert(data);
+      widgets.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Surface ID: ${item.surfaceId}',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              SelectableText(
+                prettyJson,
+                style: const TextStyle(fontFamily: 'Courier', fontSize: 13.0),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
-  //   return Column(spacing: 16, children: widgets);
-  // }
+    if (widgets.isEmpty) {
+      return const Center(child: Text('No active data models'));
+    }
+
+    return ListView(padding: const EdgeInsets.all(16), children: widgets);
+  }
 
   Widget _buildActiveSurfaces() {
     final surfaceItems = _items.whereType<SurfaceItem>().toList();
@@ -284,16 +333,48 @@ class _MyHomePageState extends State<MyHomePage> {
             ),
           ],
         ),
-        rightChild: Container(
-          color: Theme.of(
-            context,
-          ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Text(
-              _chronologicalLog,
-              style: const TextStyle(fontFamily: 'Courier', fontSize: 13.0),
-            ),
+        rightChild: DefaultTabController(
+          length: 2,
+          child: Column(
+            children: [
+              const TabBar(
+                tabs: [
+                  Tab(text: 'Messages'),
+                  Tab(text: 'Data Model'),
+                ],
+              ),
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    Container(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .surfaceContainerHighest
+                          .withValues(alpha: 0.3),
+                      child: ListView.builder(
+                        controller: _logScrollController,
+                        padding: const EdgeInsets.all(16),
+                        itemCount: _chronologicalLog.length,
+                        itemBuilder: (context, index) {
+                          final item = _chronologicalLog[index];
+                          return LogBubble(
+                            text: item.text,
+                            isUser: item.isUser,
+                          );
+                        },
+                      ),
+                    ),
+                    Container(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .surfaceContainerHighest
+                          .withValues(alpha: 0.3),
+                      child: _buildDataModelWidgets(),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),

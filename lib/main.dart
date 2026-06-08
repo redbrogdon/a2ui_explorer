@@ -9,6 +9,7 @@ import 'package:genui/genui.dart' hide TextPart;
 import 'catalog/reps_card.dart';
 import 'firebase_options.dart';
 import 'message_bubble.dart';
+import 'three_pane_layout.dart';
 
 const taskDisplaySurfaceId = 'task_display';
 
@@ -63,7 +64,7 @@ class _MyHomePageState extends State<MyHomePage> {
   late final A2uiTransportAdapter _transport;
   late final Conversation _conversation;
   late final Catalog catalog;
-  double _splitRatio = 0.5;
+  String _chronologicalLog = '';
 
   @override
   void initState() {
@@ -73,7 +74,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
     _chatSession = model.startChat();
 
-    catalog = Catalog([repsCard], catalogId: 'workout-catalog');
+    catalog = BasicCatalogItems.asCatalog();
 
     _controller = SurfaceController(catalogs: [catalog]);
 
@@ -110,16 +111,7 @@ class _MyHomePageState extends State<MyHomePage> {
     final promptBuilder = PromptBuilder.custom(
       catalog: catalog,
       allowedOperations: SurfaceOperations.all(dataModel: true),
-      systemPromptFragments: [
-        '''
-        You are a helpful workout assistant that tracks my workouts.
-        Please create a RepsCard (from the 'workout-catalog' catalog)
-        displaying a particular exercise that
-        can be measured in reps. When I have completed the exercise,
-        give me another RepsCard with a new exercise. After three
-        exercises, tell me I'm done and praise my effort.
-      ''',
-      ],
+      systemPromptFragments: [systemInstruction],
     );
 
     _conversation.sendRequest(
@@ -162,11 +154,18 @@ class _MyHomePageState extends State<MyHomePage> {
     }
 
     final text = buffer.toString();
+    setState(() {
+      _chronologicalLog += text;
+    });
 
     final response = await _chatSession.sendMessage(Content.text(text));
 
     if (response.text?.isNotEmpty ?? false) {
-      _transport.addChunk(response.text!);
+      final responseText = response.text!;
+      setState(() {
+        _chronologicalLog += responseText;
+      });
+      _transport.addChunk(responseText);
     }
   }
 
@@ -188,17 +187,34 @@ class _MyHomePageState extends State<MyHomePage> {
     await _conversation.sendRequest(ChatMessage.user(text));
   }
 
-  Widget _buildDataModelWidgets() {
-    final widgets = <Widget>[];
+  // Widget _buildDataModelWidgets() {
+  //   final widgets = <Widget>[];
 
-    for (final item in _items.whereType<SurfaceItem>()) {
-      final model = _controller.store.getDataModel(item.surfaceId);
-      final data = model.getValue<Object?>(DataPath.root);
-      final prettyJson = const JsonEncoder.withIndent('  ').convert(data);
-      widgets.add(Text(prettyJson));
+  //   for (final item in _items.whereType<SurfaceItem>()) {
+  //     final model = _controller.store.getDataModel(item.surfaceId);
+  //     final data = model.getValue<Object?>(DataPath.root);
+  //     final prettyJson = const JsonEncoder.withIndent('  ').convert(data);
+  //     widgets.add(Text(prettyJson));
+  //   }
+
+  //   return Column(spacing: 16, children: widgets);
+  // }
+
+  Widget _buildActiveSurfaces() {
+    final surfaceItems = _items.whereType<SurfaceItem>().toList();
+    if (surfaceItems.isEmpty) {
+      return const Center(child: Text('No active surfaces'));
     }
-
-    return Column(spacing: 16, children: widgets);
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        for (final item in surfaceItems)
+          Surface(
+            key: ValueKey(item.surfaceId),
+            surfaceContext: _controller.contextFor(item.surfaceId),
+          ),
+      ],
+    );
   }
 
   @override
@@ -208,171 +224,83 @@ class _MyHomePageState extends State<MyHomePage> {
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         title: const Text('Just Today'),
       ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final totalWidth = constraints.maxWidth;
-          final leftWidth = (_splitRatio * totalWidth).clamp(
-            150.0,
-            totalWidth - 150.0,
-          );
-          return Row(
-            children: [
-              SizedBox(
-                width: leftWidth,
-                child: Stack(
-                  children: [
-                    Column(
-                      children: [
-                        Expanded(
-                          child: ListView(
-                            controller: _scrollController,
-                            padding: const EdgeInsets.all(16),
-                            children: [
-                              for (final item in _items)
-                                switch (item) {
-                                  TextItem() => MessageBubble(
-                                    text: item.text,
-                                    isUser: item.isUser,
-                                  ),
-                                  SurfaceItem() => Surface(
-                                    surfaceContext: _controller.contextFor(
-                                      item.surfaceId,
-                                    ),
-                                  ),
-                                },
-                            ],
-                          ),
-                        ),
-                        SafeArea(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16.0,
-                            ),
-                            child: ValueListenableBuilder<ConversationState>(
-                              valueListenable: _conversation.state,
-                              builder: (context, state, child) {
-                                return Row(
-                                  children: [
-                                    Expanded(
-                                      child: TextField(
-                                        controller: _textController,
-                                        onSubmitted: state.isWaiting
-                                            ? null
-                                            : (_) => _addMessage(),
-                                        decoration: const InputDecoration(
-                                          hintText: 'Enter a message',
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    ElevatedButton(
-                                      onPressed: state.isWaiting
-                                          ? null
-                                          : _addMessage,
-                                      child: const Text('Send'),
-                                    ),
-                                  ],
-                                );
-                              },
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    ValueListenableBuilder<ConversationState>(
+      body: ThreePaneLayout(
+        leftChild: _buildActiveSurfaces(),
+        middleChild: Stack(
+          children: [
+            Column(
+              children: [
+                Expanded(
+                  child: ListView(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(16),
+                    children: [
+                      for (final item in _items)
+                        if (item is TextItem)
+                          MessageBubble(text: item.text, isUser: item.isUser),
+                    ],
+                  ),
+                ),
+                SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                    child: ValueListenableBuilder<ConversationState>(
                       valueListenable: _conversation.state,
                       builder: (context, state, child) {
-                        if (state.isWaiting) {
-                          return const LinearProgressIndicator();
-                        }
-                        return const SizedBox.shrink();
+                        return Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _textController,
+                                onSubmitted: state.isWaiting
+                                    ? null
+                                    : (_) => _addMessage(),
+                                decoration: const InputDecoration(
+                                  hintText: 'Enter a message',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: state.isWaiting ? null : _addMessage,
+                              child: const Text('Send'),
+                            ),
+                          ],
+                        );
                       },
-                    ),
-                  ],
-                ),
-              ),
-              GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onHorizontalDragUpdate: (details) {
-                  setState(() {
-                    _splitRatio += details.delta.dx / totalWidth;
-                    _splitRatio = _splitRatio.clamp(0.15, 0.85);
-                  });
-                },
-                child: MouseRegion(
-                  cursor: SystemMouseCursors.resizeLeftRight,
-                  child: Container(
-                    width: 8.0,
-                    color: Theme.of(context).dividerColor,
-                    child: Center(
-                      child: Container(
-                        width: 2.0,
-                        height: 30.0,
-                        color: Theme.of(context).disabledColor,
-                      ),
                     ),
                   ),
                 ),
-              ),
-              Expanded(
-                child: Container(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-                  child: _buildDataModelWidgets(),
-                ),
-              ),
-            ],
-          );
-        },
+              ],
+            ),
+            ValueListenableBuilder<ConversationState>(
+              valueListenable: _conversation.state,
+              builder: (context, state, child) {
+                if (state.isWaiting) {
+                  return const LinearProgressIndicator();
+                }
+                return const SizedBox.shrink();
+              },
+            ),
+          ],
+        ),
+        rightChild: Container(
+          color: Theme.of(
+            context,
+          ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              _chronologicalLog,
+              style: const TextStyle(fontFamily: 'Courier', fontSize: 13.0),
+            ),
+          ),
+        ),
       ),
     );
   }
 }
 
-const systemInstruction =
-    '''
-  ## PERSONA
-  You are an expert task planner.
-
-  ## GOAL
-  Work with me to produce a list of tasks that I should do today, and then track
-  the completion status of each one.
-
-  ## RULES
-  Talk with me only about tasks that I should do today.
-  Do not engage in conversation about any other topic.
-  Do not offer suggestions unless I ask for them.
-  Do not offer encouragement unless I ask for it.
-  Do not offer advice unless I ask for it.
-  Do not offer opinions unless I ask for them.
-
-  ## PROCESS
-  ### Planning
-  *   Ask me for information about tasks that I should do today.
-  *   Synthesize a list of tasks from that information.
-  *   Ask clarifying questions if you need to.
-  *   When you have a list of tasks that you think I should do today, present it
-    to me for review.
-  *   Respond to my suggestions for changes, if I have any, until I accept the
-    list.
-
-  ### Tracking
-  *   Once the list is accepted, ask me to let you know when individual tasks are
-    complete.
-  *   If I tell you a task is complete, mark it as complete.
-  *   Once all tasks are complete, send a message acknowledging that, and then
-    end the conversation.
-
-  ## USER INTERFACE
-  * To display the list of tasks create one and only one instance of the
-    TaskDisplay catalog item. Use "$taskDisplaySurfaceId" as its surface ID.
-    **YOU ARE NOT ALLOWED TO CREATE ANY OTHER UI COMPONENTS TO DISPLAY THE LIST
-    OF TASKS. ALWAYS USE THIS ONE AND ONLY INSTANCE OF TaskDisplay.**
-  * Update "$taskDisplaySurfaceId" as necessary when the list changes.
-  * "$taskDisplaySurfaceId" must include a button for each task that I can use
-    to mark it complete. When I use that button to mark a task complete, it
-    should send you a message indicating what I've done.
-  * Avoid repeating the same information in a single message.
-  * When responding with text, rather than A2UI messages, be brief.
+const systemInstruction = '''
+You're a helpful assistant. Don't create UI components unless I specifically ask you to.
 ''';

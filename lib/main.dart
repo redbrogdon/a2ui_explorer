@@ -219,25 +219,11 @@ class _MyHomePageState extends State<MyHomePage> {
 
     for (final item in _items.whereType<SurfaceItem>()) {
       final model = _controller.store.getDataModel(item.surfaceId);
-      final data = model.getValue<Object?>(DataPath.root);
-      final prettyJson = const JsonEncoder.withIndent('  ').convert(data);
       widgets.add(
-        Padding(
-          padding: const EdgeInsets.only(bottom: 16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Surface ID: ${item.surfaceId}',
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 4),
-              SelectableText(
-                prettyJson,
-                style: const TextStyle(fontFamily: 'Courier', fontSize: 13.0),
-              ),
-            ],
-          ),
+        DataModelViewer(
+          key: ValueKey(item.surfaceId),
+          surfaceId: item.surfaceId,
+          model: model,
         ),
       );
     }
@@ -378,6 +364,63 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class DataModelViewer extends StatefulWidget {
+  final String surfaceId;
+  final DataModel model;
+
+  const DataModelViewer({
+    super.key,
+    required this.surfaceId,
+    required this.model,
+  });
+
+  @override
+  State<DataModelViewer> createState() => _DataModelViewerState();
+}
+
+class _DataModelViewerState extends State<DataModelViewer> {
+  late final ValueNotifier<Object?> _notifier;
+
+  @override
+  void initState() {
+    super.initState();
+    _notifier = widget.model.subscribe<Object?>(DataPath.root);
+  }
+
+  @override
+  void dispose() {
+    _notifier.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<Object?>(
+      valueListenable: _notifier,
+      builder: (context, data, child) {
+        final prettyJson = const JsonEncoder.withIndent('  ').convert(data);
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Surface ID: ${widget.surfaceId}',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              SelectableText(
+                prettyJson,
+                style: const TextStyle(fontFamily: 'Courier', fontSize: 13.0),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

@@ -7,6 +7,7 @@ import 'package:genui/genui.dart' as genui;
 import 'package:genui/genui.dart' hide TextPart;
 
 import 'firebase_options.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'log_bubble.dart';
 import 'message_bubble.dart';
 import 'three_pane_layout.dart';
@@ -413,15 +414,90 @@ class _DataModelViewerState extends State<DataModelViewer> {
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 4),
-              SelectableText(
-                prettyJson,
-                style: const TextStyle(fontFamily: 'Courier', fontSize: 13.0),
+              MarkdownBody(
+                data: '```json\n$prettyJson\n```',
+                syntaxHighlighter: JsonSyntaxHighlighter(
+                  Theme.of(context).colorScheme,
+                ),
+                styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context))
+                    .copyWith(
+                      codeblockDecoration: const BoxDecoration(
+                        color: Colors.transparent,
+                      ),
+                    ),
               ),
             ],
           ),
         );
       },
     );
+  }
+}
+
+class JsonSyntaxHighlighter extends SyntaxHighlighter {
+  final ColorScheme colorScheme;
+
+  JsonSyntaxHighlighter(this.colorScheme);
+
+  @override
+  TextSpan format(String source) {
+    final spans = <TextSpan>[];
+    final regex = RegExp(
+      r'("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"\s*:)|' // Key
+      r'("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*")|' // String
+      r'(-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)|' // Number
+      r'(true|false|null)', // Boolean/Null
+    );
+
+    int lastMatchEnd = 0;
+    for (final match in regex.allMatches(source)) {
+      if (match.start > lastMatchEnd) {
+        spans.add(
+          TextSpan(
+            text: source.substring(lastMatchEnd, match.start),
+            style: TextStyle(color: colorScheme.onSurfaceVariant),
+          ),
+        );
+      }
+
+      final text = match.group(0)!;
+      Color color;
+
+      if (match.group(1) != null) {
+        color = colorScheme.primary;
+      } else if (match.group(3) != null) {
+        color = colorScheme.tertiary;
+      } else if (match.group(5) != null) {
+        color = colorScheme.secondary;
+      } else {
+        color = Colors.orange;
+      }
+
+      spans.add(
+        TextSpan(
+          text: text,
+          style: TextStyle(
+            color: color,
+            fontWeight: match.group(1) != null
+                ? FontWeight.bold
+                : FontWeight.normal,
+          ),
+        ),
+      );
+
+      lastMatchEnd = match.end;
+    }
+
+    if (lastMatchEnd < source.length) {
+      spans.add(
+        TextSpan(
+          text: source.substring(lastMatchEnd),
+          style: TextStyle(color: colorScheme.onSurfaceVariant),
+        ),
+      );
+    }
+
+    return TextSpan(children: spans);
   }
 }
 

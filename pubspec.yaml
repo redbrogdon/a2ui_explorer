@@ -15,6 +15,7 @@ dependencies:
   firebase_core: ^4.10.0
   firebase_ai: ^3.12.2
   json_schema_builder: ^0.1.5
+  flutter_markdown_plus: ^1.0.7
 
 dev_dependencies:
   flutter_test:
